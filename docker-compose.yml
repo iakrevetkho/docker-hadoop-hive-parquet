@@ -1,83 +1,133 @@
-version: "3"
+version: "3.7"
 
 services:
   namenode:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    restart: unless-stopped
     volumes:
-      - namenode:/hadoop/dfs/name
+      - namenode:/hadoop/dfs/data
     environment:
       - CLUSTER_NAME=test
     env_file:
-      - ./hadoop-hive.env
+      - ./.env
     ports:
-      - "50070:50070"
+      - "9870:9870"
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
     
   datanode:
-    image: bde2020/hadoop-datanode:2.0.0-hadoop2.7.4-java8
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    restart: unless-stopped
     volumes:
-      - datanode:/hadoop/dfs/data
+      - /data/hadoop/datanode:/hadoop/dfs/data
     env_file:
-      - ./hadoop-hive.env
+      - ./.env
     environment:
-      SERVICE_PRECONDITION: "namenode:50070"
-    ports:
-      - "50075:50075"
+      SERVICE_PRECONDITION: "namenode:9870"
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
 
   resourcemanager:
-    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop2.7.4-java8
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    restart: unless-stopped
     environment:
-      SERVICE_PRECONDITION: "namenode:50070 datanode:50075"
+      SERVICE_PRECONDITION: "namenode:9870 datanode:9864"
     env_file:
-      - ./hadoop-hive.env
+      - ./.env
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  nodemanager:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    environment:
+      SERVICE_PRECONDITION: "namenode:50070 datanode:50075 resourcemanager:8088"
+    env_file:
+      - ./.env
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
 
   hive-server:
-    image: bde2020/hive:2.3.2-postgresql-metastore
+    image: bde2020/hive:2.3.2
+    restart: unless-stopped
     env_file:
-      - ./hadoop-hive.env
+      - ./.env
     environment:
       HIVE_CORE_CONF_javax_jdo_option_ConnectionURL: "jdbc:postgresql://hive-metastore/metastore"
       SERVICE_PRECONDITION: "hive-metastore:9083"
     ports:
       - "10000:10000"
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
 
   hive-metastore:
-    image: bde2020/hive:2.3.2-postgresql-metastore
+    image: bde2020/hive:2.3.2
+    restart: unless-stopped
     env_file:
-      - ./hadoop-hive.env
+      - ./.env
     command: /opt/hive/bin/hive --service metastore
     environment:
-      SERVICE_PRECONDITION: "namenode:50070 datanode:50075 hive-metastore-postgresql:5432 resourcemanager:8088"
+      SERVICE_PRECONDITION: "namenode:9870 datanode:9864 hive-metastore-db:5432"
     ports:
       - "9083:9083"
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
 
-  hive-metastore-postgresql:
+  hive-metastore-db:
     image: bde2020/hive-metastore-postgresql:2.3.0
-    ports:
-      - "5432:5432"
-
-  huedb:
-    image: postgres:12.1-alpine
+    restart: unless-stopped
     volumes:
-      - pg_data:/var/lib/postgresl/data/
-    ports:
-      - "5432"
-    env_file:
-      - ./hadoop-hive.env
+      - hive-metastore-db:/var/lib/postgresl/data/
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+
+  hue-db:
+    image: postgres:12.1-alpine
+    restart: unless-stopped
+    volumes:
+      - hue-db:/var/lib/postgresl/data/
     environment:
-        SERVICE_PRECONDITION: "namenode:50070 datanode:50075 hive-metastore-postgresql:5432 resourcemanager:8088 hive-metastore:9083"
+      POSTGRES_DB: hue
+      POSTGRES_USER: hue
+      POSTGRES_PASSWORD: hue
+      SERVICE_PRECONDITION: "namenode:9870 datanode:9864 hive-metastore-postgresql:5432 resourcemanager:8088 hive-metastore:9083"
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
   
   hue:
-    image: gethue/hue:4.6.0
+    image: gethue/hue:4.7.0
+    restart: unless-stopped
     environment:
-        SERVICE_PRECONDITION: "namenode:50070 datanode:50075 hive-metastore-postgresql:5432 resourcemanager:8088 hive-metastore:9083 huedb:5000"
+        SERVICE_PRECONDITION: "namenode:9870 datanode:9864 hive-metastore-postgresql:5432 resourcemanager:8088 hive-metastore:9083 hue-db:5432"
     ports:
       - "8888:8888"
     volumes:
       - ./hue-overrides.ini:/usr/share/hue/desktop/conf/hue-overrides.ini
     links:
-      - huedb
+      - hue-db
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
 
 volumes:
   namenode:
-  datanode:
-  pg_data:
+  hive-metastore-db:
+  hue-db:
